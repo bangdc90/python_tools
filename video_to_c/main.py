@@ -337,51 +337,6 @@ class VideoToC:
         self.log(f"Đã tạo file header: {output_file}")
         return True
     
-    def extract_audio_with_ffmpeg(self, video_path, audio_output):
-        """Phương pháp thay thế để trích xuất audio bằng ffmpeg"""
-        try:
-            self.log("Đang sử dụng ffmpeg để trích xuất audio...")
-            
-            # Kiểm tra xem ffmpeg có sẵn không
-            import subprocess
-            import shutil
-            
-            ffmpeg_path = shutil.which("ffmpeg")
-            if not ffmpeg_path:
-                self.log("Không tìm thấy ffmpeg. Đang tìm phương pháp thay thế...")
-                # Thử sử dụng thư viện subprocess để tải và trích xuất audio từ video
-                return self.extract_audio_with_opencv(video_path, audio_output)
-            
-            # Sử dụng ffmpeg để trích xuất audio
-            command = [
-                ffmpeg_path,
-                "-i", video_path,
-                "-q:a", "0",
-                "-map", "a",
-                "-y",  # Ghi đè nếu file đã tồn tại
-                audio_output
-            ]
-            
-            # Chạy lệnh ffmpeg
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            _, stderr = process.communicate()
-            
-            # Kiểm tra kết quả
-            if process.returncode != 0:
-                self.log(f"Lỗi khi sử dụng ffmpeg: {stderr.decode('utf-8', errors='ignore')}")
-                return False
-            
-            self.log(f"Đã trích xuất audio thành công: {audio_output}")
-            return True
-            
-        except Exception as e:
-            self.log(f"Lỗi khi trích xuất audio bằng ffmpeg: {str(e)}")
-            return False
-    
     def extract_audio_with_opencv(self, video_path, audio_output):
         """Phương pháp cuối cùng - thông báo hướng dẫn cài đặt thủ công"""
         self.log("Không thể trích xuất audio tự động.")
@@ -451,49 +406,40 @@ class VideoToC:
             # Tạo tên file âm thanh đầu ra
             audio_output = f"{output_name}.mp3"
             
-            # Cài đặt moviepy nếu chưa có
-            self.log("Đang kiểm tra và cài đặt thư viện moviepy...")
-            import subprocess
-            import sys
-            
-            # Cài đặt moviepy bằng pip với đầy đủ thông số
-            install_cmd = [sys.executable, "-m", "pip", "install", "moviepy", "--user", "--force-reinstall"]
+            # Thử sử dụng moviepy để trích xuất audio
             try:
-                subprocess.check_call(install_cmd)
-                self.log("Đã cài đặt thư viện moviepy thành công")
-            except subprocess.CalledProcessError as e:
-                self.log(f"Lỗi khi cài đặt moviepy: {str(e)}")
-                return False
+                # Thử import moviepy trước, không cài đặt lại mỗi lần
+                try:
+                    import moviepy.editor
+                    from moviepy.editor import VideoFileClip
+                    self.log("Đã tìm thấy moviepy, đang trích xuất audio...")
+                except ImportError:
+                    self.log("Không tìm thấy moviepy.")
+                    return
                 
-            # Thử import lại sau khi cài đặt
-            try:
-                import moviepy.editor
-                from moviepy.editor import VideoFileClip
-            except ImportError:
-                self.log("Không thể import moviepy sau khi cài đặt. Thử phương pháp thay thế bằng ffmpeg...")
-                return self.extract_audio_with_ffmpeg(video_path, audio_output)
-            
-            self.log(f"Đang trích xuất audio từ video...")
-            # Tải video clip
-            video_clip = VideoFileClip(video_path)
-            
-            # Trích xuất âm thanh
-            if video_clip.audio is not None:
-                audio_clip = video_clip.audio
-                audio_clip.write_audiofile(
-                    audio_output,
-                    codec='mp3',
-                    verbose=False,
-                    logger=None
-                )
-                audio_clip.close()
-                self.log(f"Đã trích xuất audio thành công: {audio_output}")
-            else:
-                self.log("Cảnh báo: Video không có âm thanh!")
-            
-            # Đóng video clip
-            video_clip.close()
-            return True
+                # Nếu import thành công, tiếp tục trích xuất
+                video_clip = VideoFileClip(video_path)
+                
+                # Trích xuất âm thanh
+                if video_clip.audio is not None:
+                    audio_clip = video_clip.audio
+                    audio_clip.write_audiofile(
+                        audio_output,
+                        codec='mp3',
+                        verbose=False,
+                        logger=None
+                    )
+                    audio_clip.close()
+                    self.log(f"Đã trích xuất audio thành công: {audio_output}")
+                else:
+                    self.log("Cảnh báo: Video không có âm thanh!")
+                
+                # Đóng video clip
+                video_clip.close()
+                return True
+                
+            except Exception as e:
+                self.log(f"Lỗi khi sử dụng moviepy: {str(e)}")
             
         except Exception as e:
             self.log(f"Lỗi khi trích xuất audio: {str(e)}")
