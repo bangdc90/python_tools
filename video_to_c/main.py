@@ -9,16 +9,15 @@ import sys
 import re
 import cv2
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, ttk, messagebox
 import threading
 import zipfile
 import tempfile
 import shutil
+import subprocess
 from pathlib import Path
-try:
-    from moviepy.editor import VideoFileClip
-except ImportError:
-    pass  # Sẽ xử lý lỗi này khi cần dùng đến
+
+# Thư viện moviepy được import động trong hàm extract_audio
 
 
 class VideoToC:
@@ -338,6 +337,63 @@ class VideoToC:
         self.log(f"Đã tạo file header: {output_file}")
         return True
     
+    def extract_audio_with_ffmpeg(self, video_path, audio_output):
+        """Phương pháp thay thế để trích xuất audio bằng ffmpeg"""
+        try:
+            self.log("Đang sử dụng ffmpeg để trích xuất audio...")
+            
+            # Kiểm tra xem ffmpeg có sẵn không
+            import subprocess
+            import shutil
+            
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                self.log("Không tìm thấy ffmpeg. Đang tìm phương pháp thay thế...")
+                # Thử sử dụng thư viện subprocess để tải và trích xuất audio từ video
+                return self.extract_audio_with_opencv(video_path, audio_output)
+            
+            # Sử dụng ffmpeg để trích xuất audio
+            command = [
+                ffmpeg_path,
+                "-i", video_path,
+                "-q:a", "0",
+                "-map", "a",
+                "-y",  # Ghi đè nếu file đã tồn tại
+                audio_output
+            ]
+            
+            # Chạy lệnh ffmpeg
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            _, stderr = process.communicate()
+            
+            # Kiểm tra kết quả
+            if process.returncode != 0:
+                self.log(f"Lỗi khi sử dụng ffmpeg: {stderr.decode('utf-8', errors='ignore')}")
+                return False
+            
+            self.log(f"Đã trích xuất audio thành công: {audio_output}")
+            return True
+            
+        except Exception as e:
+            self.log(f"Lỗi khi trích xuất audio bằng ffmpeg: {str(e)}")
+            return False
+    
+    def extract_audio_with_opencv(self, video_path, audio_output):
+        """Phương pháp cuối cùng - thông báo hướng dẫn cài đặt thủ công"""
+        self.log("Không thể trích xuất audio tự động.")
+        self.log("Vui lòng cài đặt thư viện moviepy thủ công bằng lệnh:")
+        self.log("pip install moviepy")
+        self.log("Hoặc cài đặt ffmpeg từ: https://ffmpeg.org/download.html")
+        self.log("Sau đó, thêm ffmpeg vào PATH hệ thống và thử lại.")
+        
+        # Đánh dấu rằng không có audio
+        self.has_audio.set(False)
+        return False
+    
     def extract_frames(self, video_path, output_folder, width, height, target_fps):
         """Trích xuất các frame từ video với độ phân giải và fps đã chọn"""
         self.log(f"Đang trích xuất frame từ video với độ phân giải {width}x{height}, FPS: {target_fps}...")
@@ -392,22 +448,34 @@ class VideoToC:
     def extract_audio(self, video_path, output_name):
         """Trích xuất audio từ file video nếu người dùng tích vào ô có audio"""
         try:
-            # Kiểm tra thư viện moviepy đã được cài đặt chưa
-            if 'moviepy.editor' not in sys.modules:
-                self.log("Đang cài đặt thư viện moviepy...")
-                import subprocess
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "moviepy"])
-                from moviepy.editor import VideoFileClip
+            # Tạo tên file âm thanh đầu ra
+            audio_output = f"{output_name}.mp3"
+            
+            # Cài đặt moviepy nếu chưa có
+            self.log("Đang kiểm tra và cài đặt thư viện moviepy...")
+            import subprocess
+            import sys
+            
+            # Cài đặt moviepy bằng pip với đầy đủ thông số
+            install_cmd = [sys.executable, "-m", "pip", "install", "moviepy", "--user", "--force-reinstall"]
+            try:
+                subprocess.check_call(install_cmd)
                 self.log("Đã cài đặt thư viện moviepy thành công")
-            else:
+            except subprocess.CalledProcessError as e:
+                self.log(f"Lỗi khi cài đặt moviepy: {str(e)}")
+                return False
+                
+            # Thử import lại sau khi cài đặt
+            try:
+                import moviepy.editor
                 from moviepy.editor import VideoFileClip
+            except ImportError:
+                self.log("Không thể import moviepy sau khi cài đặt. Thử phương pháp thay thế bằng ffmpeg...")
+                return self.extract_audio_with_ffmpeg(video_path, audio_output)
             
             self.log(f"Đang trích xuất audio từ video...")
             # Tải video clip
             video_clip = VideoFileClip(video_path)
-            
-            # Tạo tên file âm thanh đầu ra
-            audio_output = f"{output_name}.mp3"
             
             # Trích xuất âm thanh
             if video_clip.audio is not None:
@@ -510,8 +578,22 @@ class VideoToC:
             if self.has_audio.get():
                 # Lấy tên file không có phần mở rộng để đặt tên cho file audio
                 output_name = os.path.splitext(output_file)[0]
-                if not self.extract_audio(video_path, output_name):
-                    self.log("Cảnh báo: Không thể trích xuất audio từ video, nhưng quá trình chuyển đổi vẫn hoàn thành")
+                self.log("Đang xử lý audio...")
+                audio_success = self.extract_audio(video_path, output_name)
+                
+                if not audio_success:
+                    self.log("Cảnh báo: Không thể trích xuất audio từ video")
+                    # Hiển thị thông báo
+                    messagebox.showwarning(
+                        "Cảnh báo", 
+                        "Không thể trích xuất audio từ video.\n\n"
+                        "File C header vẫn được tạo thành công, nhưng không có file audio.\n\n"
+                        "Bạn có thể thử cài đặt thủ công các thư viện:\n"
+                        "pip install moviepy\n"
+                        "hoặc cài đặt ffmpeg và thêm vào PATH hệ thống."
+                    )
+                else:
+                    self.log(f"Trích xuất audio thành công!")
             
             self.update_progress(100)
             self.log("Hoàn thành! File đầu ra: " + output_file)
