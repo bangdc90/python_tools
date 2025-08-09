@@ -15,6 +15,10 @@ import zipfile
 import tempfile
 import shutil
 from pathlib import Path
+try:
+    from moviepy.editor import VideoFileClip
+except ImportError:
+    pass  # Sẽ xử lý lỗi này khi cần dùng đến
 
 
 class VideoToC:
@@ -385,6 +389,50 @@ class VideoToC:
         self.log(f"Đã trích xuất {saved_count} frame với FPS: {target_fps}")
         return True
     
+    def extract_audio(self, video_path, output_name):
+        """Trích xuất audio từ file video nếu người dùng tích vào ô có audio"""
+        try:
+            # Kiểm tra thư viện moviepy đã được cài đặt chưa
+            if 'moviepy.editor' not in sys.modules:
+                self.log("Đang cài đặt thư viện moviepy...")
+                import subprocess
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "moviepy"])
+                from moviepy.editor import VideoFileClip
+                self.log("Đã cài đặt thư viện moviepy thành công")
+            else:
+                from moviepy.editor import VideoFileClip
+            
+            self.log(f"Đang trích xuất audio từ video...")
+            # Tải video clip
+            video_clip = VideoFileClip(video_path)
+            
+            # Tạo tên file âm thanh đầu ra
+            audio_output = f"{output_name}.mp3"
+            
+            # Trích xuất âm thanh
+            if video_clip.audio is not None:
+                audio_clip = video_clip.audio
+                audio_clip.write_audiofile(
+                    audio_output,
+                    codec='mp3',
+                    verbose=False,
+                    logger=None
+                )
+                audio_clip.close()
+                self.log(f"Đã trích xuất audio thành công: {audio_output}")
+            else:
+                self.log("Cảnh báo: Video không có âm thanh!")
+            
+            # Đóng video clip
+            video_clip.close()
+            return True
+            
+        except Exception as e:
+            self.log(f"Lỗi khi trích xuất audio: {str(e)}")
+            import traceback
+            self.log(traceback.format_exc())
+            return False
+    
     def start_conversion(self):
         """Bắt đầu quá trình chuyển đổi video"""
         if self.running:
@@ -457,6 +505,13 @@ class VideoToC:
             if not self.jpg_to_c_header(self.temp_dir, output_file):
                 self.log("Lỗi: Không thể chuyển đổi JPG thành mảng C")
                 return
+            
+            # Trích xuất audio nếu người dùng tích vào ô có audio
+            if self.has_audio.get():
+                # Lấy tên file không có phần mở rộng để đặt tên cho file audio
+                output_name = os.path.splitext(output_file)[0]
+                if not self.extract_audio(video_path, output_name):
+                    self.log("Cảnh báo: Không thể trích xuất audio từ video, nhưng quá trình chuyển đổi vẫn hoàn thành")
             
             self.update_progress(100)
             self.log("Hoàn thành! File đầu ra: " + output_file)
