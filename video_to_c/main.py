@@ -36,6 +36,9 @@ class VideoToC:
         self.resolution = tk.StringVar(value="128x128")
         self.fps = tk.StringVar(value="15")
         self.has_audio = tk.BooleanVar(value=True)  # Biến lưu trạng thái có audio hay không
+        self.use_webp = tk.BooleanVar(value=False)  # Biến lưu trạng thái sử dụng WebP hay JPG
+        self.webp_quality = tk.StringVar(value="80")  # Chất lượng WebP (0-100)
+        self.jpg_quality = tk.StringVar(value="90")  # Chất lượng JPG (0-100)
         
         # Chuẩn bị các thành phần giao diện
         self.setup_ui()
@@ -82,7 +85,20 @@ class VideoToC:
         
         # Checkbox có audio hay không
         audio_check = ttk.Checkbutton(settings_frame, text="Có audio", variable=self.has_audio)
-        audio_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        audio_check.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        # Checkbox sử dụng WebP hay JPG
+        webp_check = ttk.Checkbutton(settings_frame, text="Dùng WebP (nén tốt hơn JPG)", variable=self.use_webp)
+        webp_check.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Chất lượng ảnh
+        ttk.Label(settings_frame, text="Chất lượng JPG:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+        jpg_quality_entry = ttk.Entry(settings_frame, textvariable=self.jpg_quality, width=5)
+        jpg_quality_entry.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Label(settings_frame, text="Chất lượng WebP:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+        webp_quality_entry = ttk.Entry(settings_frame, textvariable=self.webp_quality, width=5)
+        webp_quality_entry.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
         
         # Progress bar
         progress_frame = ttk.Frame(main_frame)
@@ -190,37 +206,49 @@ class VideoToC:
         return 0  # Trả về 0 nếu không tìm thấy số
     
     def jpg_to_c_header(self, jpg_folder, output_file):
-        """Chuyển đổi các ảnh JPG trong thư mục thành mảng C trong file header"""
+        """Chuyển đổi các ảnh JPG/WebP trong thư mục thành mảng C trong file header"""
         try:
-            self.log("Chuyển đổi JPG thành mảng C...")
+            self.log("Chuyển đổi ảnh thành mảng C...")
             
             # Tạo tên prefix và số video
             prefix = self.sanitize_prefix(output_file)
             video_number = self.extract_number_from_filename(output_file)
             
-            # Lấy danh sách tất cả các file JPG trong thư mục
-            jpg_files = [f for f in os.listdir(jpg_folder) if f.lower().endswith('.jpg')]
-            jpg_files.sort(key=self.natural_sort_key)
+            # Lấy danh sách tất cả các file ảnh trong thư mục
+            if self.use_webp.get():
+                image_files = [f for f in os.listdir(jpg_folder) if f.lower().endswith('.webp')]
+                self.log(f"Đang sử dụng định dạng WebP cho các frame")
+            else:
+                image_files = [f for f in os.listdir(jpg_folder) if f.lower().endswith('.jpg')]
+                self.log(f"Đang sử dụng định dạng JPG cho các frame")
+                
+            image_files.sort(key=self.natural_sort_key)
             
-            total_files = len(jpg_files)
-            self.log(f"Tìm thấy {total_files} frame JPG")
+            total_files = len(image_files)
+            self.log(f"Tìm thấy {total_files} frame")
         
             with open(output_file, 'w', encoding='utf-8') as header:
                 frame_idx = 0
-                jpg_names = []
-                jpg_sizes = []
+                img_names = []
+                img_sizes = []
                 
-                # Xử lý từng file JPG
-                for i, file in enumerate(jpg_files):
+                # Xử lý từng file ảnh
+                for i, file in enumerate(image_files):
                     file_path = os.path.join(jpg_folder, file)
                     with open(file_path, 'rb') as f:
                         data = f.read()
                     
-                    array_name = f'{prefix}_jpg_frame_{frame_idx}'
-                    jpg_names.append(array_name)
-                    jpg_sizes.append(len(data))
+                    # Tên mảng sẽ khác nhau tùy thuộc vào định dạng ảnh
+                    if self.use_webp.get():
+                        array_name = f'{prefix}_webp_frame_{frame_idx}'
+                    else:
+                        array_name = f'{prefix}_jpg_frame_{frame_idx}'
+                        
+                    img_names.append(array_name)
+                    img_sizes.append(len(data))
                     
-                    header.write(f'// Frame {frame_idx}: JPG image, size: {len(data)} bytes\n')
+                    img_format = "WebP" if self.use_webp.get() else "JPG"
+                    header.write(f'// Frame {frame_idx}: {img_format} image, size: {len(data)} bytes\n')
                     header.write(f'const uint8_t {array_name}[] PROGMEM = {{\n')
                     
                     for i, byte in enumerate(data):
@@ -230,24 +258,24 @@ class VideoToC:
                     header.write('\n};\n\n')
                     frame_idx += 1
                     
-                    # Cập nhật tiến trình
-                    progress = 70 + (i / total_files) * 30
+                    # Cập nhật tiến trình (phần chuyển đổi ảnh sang C chiếm 30%)
+                    progress = 60 + (i / total_files) * 30
                     self.update_progress(progress)
                 
                 # Viết danh sách con trỏ đến các frame
                 header.write(f'const uint8_t* const {prefix}_frames[] PROGMEM = {{\n')
-                for name in jpg_names:
+                for name in img_names:
                     header.write(f'  {name},\n')
                 header.write('};\n\n')
                 
                 # Viết danh sách kích thước frame
                 header.write(f'const uint16_t {prefix}_frame_sizes[] PROGMEM = {{\n')
-                for size in jpg_sizes:
+                for size in img_sizes:
                     header.write(f'  {size},\n')
                 header.write('};\n\n')
                 
                 # Tổng số frame
-                header.write(f'const uint16_t {prefix}_NUM_FRAMES = {len(jpg_names)};\n\n')
+                header.write(f'const uint16_t {prefix}_NUM_FRAMES = {len(img_names)};\n\n')
                 
                 # Gán vào struct VideoInfo
                 header.write(f'VideoInfo {prefix} = {{\n')
@@ -383,15 +411,37 @@ class VideoToC:
                 # Thay đổi kích thước frame
                 resized_frame = cv2.resize(frame, (width, height))
                 
-                # Lưu frame thành file JPG
-                output_path = os.path.join(output_folder, f"frame_{saved_count:04d}.jpg")
-                cv2.imwrite(output_path, resized_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                # Lưu frame thành file JPG hoặc WebP tùy theo lựa chọn
+                if self.use_webp.get():
+                    # Lấy chất lượng WebP từ người dùng
+                    try:
+                        webp_quality = int(self.webp_quality.get())
+                        # Đảm bảo chất lượng nằm trong khoảng 0-100
+                        webp_quality = max(0, min(100, webp_quality))
+                    except ValueError:
+                        webp_quality = 80  # Giá trị mặc định nếu không hợp lệ
+                    
+                    # Lưu frame thành file WebP
+                    output_path = os.path.join(output_folder, f"frame_{saved_count:04d}.webp")
+                    cv2.imwrite(output_path, resized_frame, [cv2.IMWRITE_WEBP_QUALITY, webp_quality])
+                else:
+                    # Lấy chất lượng JPG từ người dùng
+                    try:
+                        jpg_quality = int(self.jpg_quality.get())
+                        # Đảm bảo chất lượng nằm trong khoảng 0-100
+                        jpg_quality = max(0, min(100, jpg_quality))
+                    except ValueError:
+                        jpg_quality = 90  # Giá trị mặc định nếu không hợp lệ
+                    
+                    # Lưu frame thành file JPG
+                    output_path = os.path.join(output_folder, f"frame_{saved_count:04d}.jpg")
+                    cv2.imwrite(output_path, resized_frame, [cv2.IMWRITE_JPEG_QUALITY, jpg_quality])
                 
                 saved_count += 1
                 next_frame_to_save += frame_interval
                 
-                # Cập nhật tiến trình
-                progress = (frame_count / total_frames) * 70
+                # Cập nhật tiến trình (60% cho phần trích xuất frame)
+                progress = (frame_count / total_frames) * 60
                 self.update_progress(progress)
             
             frame_count += 1
@@ -431,8 +481,13 @@ class VideoToC:
                     )
                     audio_clip.close()
                     self.log(f"Đã trích xuất audio thành công: {audio_output}")
+                    
+                    # Cập nhật tiến trình (10% cuối cùng)
+                    self.update_progress(90)
                 else:
                     self.log("Cảnh báo: Video không có âm thanh!")
+                    # Vẫn cập nhật tiến trình
+                    self.update_progress(90)
                 
                 # Đóng video clip
                 video_clip.close()
@@ -479,6 +534,25 @@ class VideoToC:
             self.log("Lỗi: Vui lòng nhập tên file đầu ra")
             return
         
+        # Kiểm tra giá trị chất lượng ảnh
+        try:
+            jpg_quality = int(self.jpg_quality.get())
+            if jpg_quality < 0 or jpg_quality > 100:
+                self.log("Lỗi: Chất lượng JPG phải nằm trong khoảng 0-100")
+                return
+        except ValueError:
+            self.log("Lỗi: Chất lượng JPG phải là số nguyên")
+            return
+            
+        try:
+            webp_quality = int(self.webp_quality.get())
+            if webp_quality < 0 or webp_quality > 100:
+                self.log("Lỗi: Chất lượng WebP phải nằm trong khoảng 0-100")
+                return
+        except ValueError:
+            self.log("Lỗi: Chất lượng WebP phải là số nguyên")
+            return
+        
         # Thêm phần mở rộng .h nếu không có
         if not output_file.lower().endswith('.h'):
             output_file += '.h'
@@ -489,6 +563,23 @@ class VideoToC:
         self.log(f"- Độ phân giải: {resolution}")
         self.log(f"- FPS: {fps}")
         self.log(f"- Có audio: {'Có' if self.has_audio.get() else 'Không'}")
+        
+        # Hiển thị thông tin về định dạng ảnh và chất lượng
+        if self.use_webp.get():
+            try:
+                webp_quality = int(self.webp_quality.get())
+                webp_quality = max(0, min(100, webp_quality))
+            except ValueError:
+                webp_quality = 80
+            self.log(f"- Định dạng ảnh: WebP (chất lượng: {webp_quality}%)")
+        else:
+            try:
+                jpg_quality = int(self.jpg_quality.get())
+                jpg_quality = max(0, min(100, jpg_quality))
+            except ValueError:
+                jpg_quality = 90
+            self.log(f"- Định dạng ảnh: JPG (chất lượng: {jpg_quality}%)")
+            
         self.log(f"- File đầu ra: {output_file}")
         
         # Vô hiệu hóa nút Start
@@ -540,7 +631,11 @@ class VideoToC:
                     )
                 else:
                     self.log(f"Trích xuất audio thành công!")
+            else:
+                # Nếu không có audio, cập nhật tiến trình lên 90%
+                self.update_progress(90)
             
+            # Hoàn thành toàn bộ quá trình
             self.update_progress(100)
             self.log("Hoàn thành! File đầu ra: " + output_file)
             
